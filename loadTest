@@ -1,0 +1,5 @@
+#!/bin/bash
+
+sudo rmmod asgn2
+sudo insmod asgn2.ko
+sudo chown pi:pi /dev/asgn2
