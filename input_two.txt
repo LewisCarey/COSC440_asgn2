@@ -162,20 +162,6 @@ int asgn2_release (struct inode *inode, struct file *filp) {
 }
 
 /**
- * The tasklet that reads the data from the circular buffer
- * and writes it into memory.
- */
-int cb_read (void) {
-	printk(KERN_WARNING "I am a tasklet and I am running");	
-
-	
-
-	return 0;
-}
-
-DECLARE_TASKLET(t_name, cb_read, (unsigned long) &circ_buf);
-
-/**
  * This function writes the byte into the circular buffer.
  * Keeps track of the circular buffer positions and capacity.
  *
@@ -185,7 +171,7 @@ int cb_write (char byte) {
 	printk(KERN_WARNING "Writing byte to buffer: %c\n", byte);
 
 	// If write is one less than read, we know the buffer is full. Drop bytes
-	if ((circ_buf.writeIndex + 1) % circ_buf.capacity == circ_buf.readIndex) {
+	if (circ_buf.writeIndex == circ_buf.readIndex - 1) {
 		// We are full, drop byte
 		printk(KERN_WARNING "Circular buffer is full, dropping byte.\n");
 		return 0;
@@ -197,9 +183,6 @@ int cb_write (char byte) {
 	
 		// Increment the write location
 		circ_buf.writeIndex = (circ_buf.writeIndex + 1) % circ_buf.capacity;	
-
-		// Schedule the tasklet
-		tasklet_schedule(&t_name);
 	}
 
 	return 0;
@@ -210,6 +193,7 @@ int cb_write (char byte) {
  * If we have the other half, we add them together and pass them to the write which schedules the circular buffer.
  */
 int get_half_byte (void) {
+	//printk(KERN_WARNING "Byte: %u\n", read_half_byte());
 	
 	// If we are saving the firstHalfByte, process the full byte
 	if (firstHalfByte != -1) {
@@ -522,9 +506,8 @@ int __init asgn2_init_module(void){
 		return -EINVAL;
 	}
 
-	// Initialise the circular buffer	
-	//circ_buf.capacity = PAGE_SIZE;
-	circ_buf.capacity = 3;
+	// Initialise the circular buffer
+	circ_buf.capacity = PAGE_SIZE;
 	circ_buf.buffer = kmalloc(sizeof (char) * circ_buf.capacity, GFP_KERNEL);
 	circ_buf.readIndex = 0;
 	circ_buf.writeIndex = 0;	
