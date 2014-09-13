@@ -36,9 +36,15 @@ __attribute__((section("__versions"))) = {
 	{ 0xd197d610, "kmem_cache_alloc" },
 	{ 0xfa2a45e, "__memzero" },
 	{ 0xfbc74f64, "__copy_from_user" },
-	{ 0x2e5810c6, "__aeabi_unwind_cpp_pr1" },
 	{ 0x2875e14d, "kmem_cache_free" },
 	{ 0x969267bd, "__free_pages" },
+	{ 0xf20dabd8, "free_irq" },
+	{ 0x9dfdf722, "gpio_free_array" },
+	{ 0xd6b8e852, "request_threaded_irq" },
+	{ 0x8574ca6c, "gpio_request_array" },
+	{ 0x4ff229c7, "gpiochip_find" },
+	{ 0x2e5810c6, "__aeabi_unwind_cpp_pr1" },
+	{ 0xe2d5255a, "strcmp" },
 	{ 0x7ec1c780, "mem_map" },
 	{ 0x67c2fa54, "__copy_to_user" },
 	{ 0xb81960ca, "snprintf" },
@@ -53,4 +59,4 @@ __attribute__((section(".modinfo"))) =
 "depends=";
 
 
-MODULE_INFO(srcversion, "C03C1B4D8D27184ABB37972");
+MODULE_INFO(srcversion, "4973FEE0B0E938E53C60518");

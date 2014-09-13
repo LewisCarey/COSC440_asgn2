@@ -574,6 +574,43 @@ deps_/home/pi/asgn2/asgn2.o := \
   include/linux/aio.h \
   include/linux/aio_abi.h \
   include/linux/uio.h \
+  /home/pi/asgn2/gpio.c \
+  include/linux/platform_device.h \
+    $(wildcard include/config/suspend.h) \
+    $(wildcard include/config/hibernate/callbacks.h) \
+  include/linux/mod_devicetable.h \
+  include/linux/gpio.h \
+    $(wildcard include/config/generic/gpio.h) \
+    $(wildcard include/config/arch/have/custom/gpio/h.h) \
+  /home/pi/rpi-3.6.y/arch/arm/include/asm/gpio.h \
+    $(wildcard include/config/arch/nr/gpio.h) \
+  arch/arm/mach-bcm2708/include/mach/gpio.h \
+    $(wildcard include/config/gpiolib.h) \
+  include/asm-generic/gpio.h \
+    $(wildcard include/config/of/gpio.h) \
+    $(wildcard include/config/of.h) \
+    $(wildcard include/config/gpio/sysfs.h) \
+  include/linux/of.h \
+    $(wildcard include/config/sparc.h) \
+    $(wildcard include/config/of/dynamic.h) \
+  arch/arm/mach-bcm2708/include/mach/platform.h \
+  arch/arm/mach-bcm2708/include/mach/arm_control.h \
+  arch/arm/mach-bcm2708/include/mach/irqs.h \
+  include/linux/interrupt.h \
+    $(wildcard include/config/generic/hardirqs.h) \
+    $(wildcard include/config/irq/forced/threading.h) \
+    $(wildcard include/config/generic/irq/probe.h) \
+  include/linux/irqreturn.h \
+  include/linux/irqnr.h \
+  include/linux/hardirq.h \
+  include/linux/ftrace_irq.h \
+    $(wildcard include/config/ftrace/nmi/enter.h) \
+  /home/pi/rpi-3.6.y/arch/arm/include/asm/hardirq.h \
+  /home/pi/rpi-3.6.y/arch/arm/include/asm/irq.h \
+    $(wildcard include/config/sparse/irq.h) \
+  include/linux/irq_cpustat.h \
+  include/linux/version.h \
+  /home/pi/rpi-3.6.y/arch/arm/include/asm/switch_to.h \
 
 /home/pi/asgn2/asgn2.o: $(deps_/home/pi/asgn2/asgn2.o)
 

@@ -30,7 +30,8 @@
 #include <linux/proc_fs.h>
 #include <linux/device.h>
 #include <linux/sched.h>
-#include <gpio.c>
+#include "gpio.c"
+#include <linux/interrupt.h>
 
 #define MYDEV_NAME "asgn2"
 #define MYIOC_TYPE 'k'
@@ -48,6 +49,7 @@ typedef struct page_node_rec {
   struct page *page;
 } page_node;
 
+
 typedef struct asgn2_dev_t {
   dev_t dev;            /* the device */
   struct cdev *cdev;
@@ -63,6 +65,8 @@ typedef struct asgn2_dev_t {
 
 asgn2_dev asgn2_device;
 
+
+int firstHalfByte = -1;	/* Saves the first half of the byte when it comes in */
 
 int asgn2_major = 0;                      /* major number of module */  
 int asgn2_minor = 0;                      /* minor number of module */
@@ -150,6 +154,37 @@ int asgn2_release (struct inode *inode, struct file *filp) {
   return 0;
 }
 
+
+/**
+ * This function will call gpio.c read_half_byte() to read the half byte which generated the interrupt.
+ * If we have the other half, we add them together and pass them to the write which schedules the circular buffer.
+ */
+int get_half_byte (void) {
+	//printk(KERN_WARNING "Byte: %u\n", read_half_byte());
+	
+	// If we are saving the firstHalfByte, process the full byte
+	if (firstHalfByte != -1) {
+		int secondHalfByte = read_half_byte();
+		char fullByte = (char) firstHalfByte << 4 | secondHalfByte;
+		// Send the fullbyte to circular buffer
+		firstHalfByte = -1;
+		printk(KERN_WARNING "Byte sent: %d", fullByte);
+	} 
+	// Get first half of the byte
+	else { 
+		firstHalfByte = read_half_byte();	
+	}
+	
+	return 0;
+}
+
+
+// This is the interrupt handler for the assignment
+irqreturn_t dummyport_interrupt(int irq, void *dev_id) {
+	get_half_byte();
+
+	return 0;
+}
 
 /**
  * This function reads contents of the virtual disk and writes to the user 
@@ -431,6 +466,12 @@ int __init asgn2_init_module(void){
   /* END SKELETON */
 
   /* START TRIM */
+	int initHandler = gpio_dummy_init();
+	if (initHandler != 0) {
+    		printk(KERN_WARNING "asgn2: Failed to initialise interrupt handler\n");
+		return -EINVAL;
+	}
+
   atomic_set(&asgn2_device.nprocs, 0);
   atomic_set(&asgn2_device.max_nprocs, 1);
 
@@ -545,6 +586,9 @@ void __exit asgn2_exit_module(void){
    * cleanup in reverse order
    */
   /* END SKELETON */
+	
+	gpio_dummy_exit();
+
   /* START TRIM */
   free_memory_pages();
   kmem_cache_destroy(asgn2_device.cache);
