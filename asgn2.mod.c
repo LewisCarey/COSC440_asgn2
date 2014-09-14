@@ -33,11 +33,7 @@ __attribute__((section("__versions"))) = {
 	{ 0xe3321d40, "cdev_add" },
 	{ 0x9d0d02cf, "cdev_alloc" },
 	{ 0x29537c9e, "alloc_chrdev_region" },
-	{ 0x30407f, "contig_page_data" },
-	{ 0x2da2b3ae, "__alloc_pages_nodemask" },
 	{ 0xd197d610, "kmem_cache_alloc" },
-	{ 0xfa2a45e, "__memzero" },
-	{ 0xfbc74f64, "__copy_from_user" },
 	{ 0xfaef0ed, "__tasklet_schedule" },
 	{ 0xff178f6, "__aeabi_idivmod" },
 	{ 0x2875e14d, "kmem_cache_free" },
@@ -47,11 +43,11 @@ __attribute__((section("__versions"))) = {
 	{ 0xd6b8e852, "request_threaded_irq" },
 	{ 0x8574ca6c, "gpio_request_array" },
 	{ 0x4ff229c7, "gpiochip_find" },
+	{ 0x2e5810c6, "__aeabi_unwind_cpp_pr1" },
 	{ 0xe2d5255a, "strcmp" },
 	{ 0x7ec1c780, "mem_map" },
 	{ 0x67c2fa54, "__copy_to_user" },
 	{ 0xb81960ca, "snprintf" },
-	{ 0x2e5810c6, "__aeabi_unwind_cpp_pr1" },
 	{ 0x27e1a049, "printk" },
 	{ 0x353e3fa5, "__get_user_4" },
 	{ 0xefd6cf06, "__aeabi_unwind_cpp_pr0" },
@@ -63,4 +59,4 @@ __attribute__((section(".modinfo"))) =
 "depends=";
 
 
-MODULE_INFO(srcversion, "997C41F781EDB697A3A8463");
+MODULE_INFO(srcversion, "D5719CBDF57B249DD570B5F");

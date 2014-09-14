@@ -2,7 +2,7 @@
 /**
  * File: asgn2.c
  * Date: 13/03/2011
- * Author: Your Name 
+ * Author: Lewis Carey 
  * Version: 0.1
  *
  * This is a module which serves as a virtual ramdisk which disk size is
@@ -70,6 +70,9 @@ struct asgn2_circular_buffer {
 	int writeIndex;// Index you write to
 	int capacity;
 } circ_buf;
+
+// The write position
+int w_pos = 0;
 
 asgn2_dev asgn2_device;
 
@@ -162,18 +165,123 @@ int asgn2_release (struct inode *inode, struct file *filp) {
 }
 
 /**
- * The tasklet that reads the data from the circular buffer
- * and writes it into memory.
+ * This function writes from the user buffer to the virtual disk of this
+ * module
  */
-int cb_read (void) {
-	printk(KERN_WARNING "I am a tasklet and I am running");	
+size_t asgn2_write(const char *buf, size_t count) {
+  size_t orig_f_pos = w_pos;  /* the original file position */
+  size_t size_written = 0;  /* size written to virtual disk in this function */
+  size_t begin_offset;      /* the offset from the beginning of a page to
+  			       start writing */
+  int begin_page_no = w_pos / PAGE_SIZE;  /* the first page this finction
+  					      should start writing to */
 
+  int curr_page_no = 0;     /* the current page number */
+  size_t curr_size_written; /* size written to virtual disk in this round */
+  size_t size_to_be_written;  /* size to be read in the current round in
+  				 while loop */
+  
+  struct list_head *ptr = asgn2_device.mem_list.next;
+  page_node *curr;
+
+  /* START SKELETON */
+  /* COMPLETE ME */
+  /**
+   * Traverse the list until the first page reached, and add nodes if necessary
+   *
+   * Then write the data page by page, remember to handle the situation
+   *   when copy_from_user() writes less than the amount you requested.
+   *   a while loop / do-while loop is recommended to handle this situation.
+   */
+  /* END SKELETON */
+  /* START TRIM */
+	printk(KERN_WARNING "Writing from letter %c another %d letters.", buf, count);
+	return 0;
 	
 
+  while (size_written < count) {
+    curr = list_entry(ptr, page_node, list);
+    if (ptr == &asgn2_device.mem_list) {
+      /* not enough page, so add page */
+      curr = kmem_cache_alloc(asgn2_device.cache, GFP_KERNEL);
+      if (NULL == curr) {
+  	printk(KERN_WARNING "Not enough memory left\n");
+  	break;
+      }
+      curr->page = alloc_page(GFP_KERNEL);
+      if (NULL == curr->page) {
+  	printk(KERN_WARNING "Not enough memory left\n");
+        kmem_cache_free(asgn2_device.cache, curr);
+  	break;
+      }
+      //INIT_LIST_HEAD(&curr->list);
+      list_add_tail(&(curr->list), &asgn2_device.mem_list);
+      asgn2_device.num_pages++;
+      ptr = asgn2_device.mem_list.prev;
+    } else if (curr_page_no < begin_page_no) {
+      /* move on to the next page */
+      ptr = ptr->next;
+      curr_page_no++;
+    } else {
+      /* this is the page to write to */
+      //begin_offset = *f_pos % PAGE_SIZE;
+      size_to_be_written = (size_t)min((size_t)(count - size_written),
+  				       (size_t)(PAGE_SIZE - begin_offset));
+      do {
+        curr_size_written = size_to_be_written -
+  	  copy_from_user(page_address(curr->page) + begin_offset,
+  	  	         buf + size_written, size_to_be_written);
+        size_written += curr_size_written;
+        begin_offset += curr_size_written;
+        //*f_pos += curr_size_written;
+        size_to_be_written -= curr_size_written;
+      } while (size_to_be_written > 0);
+      curr_page_no++;
+      ptr = ptr->next;
+    }
+  }
+
+  /* END TRIM */
+
+
+  asgn2_device.data_size = max(asgn2_device.data_size,
+                               orig_f_pos + size_written);
+  return size_written;
+}
+/**
+ * The tasklet that reads the data from the circular buffer
+ * and chooses what to write into memory.
+ */
+int page_queue_write (void) {
+	printk(KERN_WARNING "I am a tasklet and I am running");	
+
+	// Check that there is memory to write in the circular buffer
+	if (circ_buf.readIndex == circ_buf.writeIndex) {
+		printk(KERN_WARNING "No more data to read from the circular buffer");
+		return 0;
+	} 
+	// Read from the circular buffer and write into memory
+	
+	// If write has looped around (is below read)
+	if (circ_buf.writeIndex < circ_buf.readIndex) {
+		int bytesNotWritten = asgn2_write(circ_buf.buffer[circ_buf.readIndex], 
+						(circ_buf.writeIndex + circ_buf.capacity) - circ_buf.readIndex);
+		circ_buf.readIndex += ((circ_buf.writeIndex + circ_buf.capacity) - circ_buf.readIndex) - bytesNotWritten;
+		// Mod the position to ensure wrap around
+		circ_buf.readIndex = circ_buf.readIndex % circ_buf.capacity;
+	}
+	// Otherwise...
+	else {
+		int bytesNotWritten = asgn2_write(circ_buf.buffer[circ_buf.readIndex], 
+						circ_buf.writeIndex - circ_buf.readIndex);
+		// Set the read and write indices by just adding on to read
+		circ_buf.readIndex += (circ_buf.writeIndex - circ_buf.readIndex) - bytesNotWritten;
+	} 		
+	
 	return 0;
 }
 
-DECLARE_TASKLET(t_name, cb_read, (unsigned long) &circ_buf);
+DECLARE_TASKLET(t_name, page_queue_write, (unsigned long) &circ_buf);
 
 /**
  * This function writes the byte into the circular buffer.
@@ -315,87 +423,6 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   return size_read;
 }
 
-/**
- * This function writes from the user buffer to the virtual disk of this
- * module
- */
-ssize_t asgn2_write(struct file *filp, const char __user *buf, size_t count,
-		  loff_t *f_pos) {
-  size_t orig_f_pos = *f_pos;  /* the original file position */
-  size_t size_written = 0;  /* size written to virtual disk in this function */
-  size_t begin_offset;      /* the offset from the beginning of a page to
-			       start writing */
-  int begin_page_no = *f_pos / PAGE_SIZE;  /* the first page this finction
-					      should start writing to */
-
-  int curr_page_no = 0;     /* the current page number */
-  size_t curr_size_written; /* size written to virtual disk in this round */
-  size_t size_to_be_written;  /* size to be read in the current round in 
-				 while loop */
-  
-  struct list_head *ptr = asgn2_device.mem_list.next;
-  page_node *curr;
-
-  /* START SKELETON */
-  /* COMPLETE ME */
-  /**
-   * Traverse the list until the first page reached, and add nodes if necessary
-   *
-   * Then write the data page by page, remember to handle the situation
-   *   when copy_from_user() writes less than the amount you requested.
-   *   a while loop / do-while loop is recommended to handle this situation. 
-   */
-  /* END SKELETON */
-  /* START TRIM */
-  while (size_written < count) {
-    curr = list_entry(ptr, page_node, list);
-    if (ptr == &asgn2_device.mem_list) {
-      /* not enough page, so add page */
-      curr = kmem_cache_alloc(asgn2_device.cache, GFP_KERNEL);
-      if (NULL == curr) {
-	printk(KERN_WARNING "Not enough memory left\n");
-	break;
-      }
-      curr->page = alloc_page(GFP_KERNEL);
-      if (NULL == curr->page) {
-	printk(KERN_WARNING "Not enough memory left\n");
-        kmem_cache_free(asgn2_device.cache, curr);
-	break;
-      }
-      //INIT_LIST_HEAD(&curr->list);
-      list_add_tail(&(curr->list), &asgn2_device.mem_list);
-      asgn2_device.num_pages++;
-      ptr = asgn2_device.mem_list.prev;
-    } else if (curr_page_no < begin_page_no) {
-      /* move on to the next page */
-      ptr = ptr->next;
-      curr_page_no++;
-    } else {
-      /* this is the page to write to */
-      begin_offset = *f_pos % PAGE_SIZE;
-      size_to_be_written = (size_t)min((size_t)(count - size_written), 
-				       (size_t)(PAGE_SIZE - begin_offset));
-      do {
-        curr_size_written = size_to_be_written - 
-	  copy_from_user(page_address(curr->page) + begin_offset,
-	  	         buf + size_written, size_to_be_written);
-        size_written += curr_size_written;
-        begin_offset += curr_size_written;
-        *f_pos += curr_size_written;
-        size_to_be_written -= curr_size_written;
-      } while (size_to_be_written > 0);
-      curr_page_no++;
-      ptr = ptr->next;
-    }
-  }
-
-  /* END TRIM */
-
-
-  asgn2_device.data_size = max(asgn2_device.data_size,
-                               orig_f_pos + size_written);
-  return size_written;
-}
 
 #define SET_NPROC_OP 1
 #define TEM_SET_NPROC _IOW(MYIOC_TYPE, SET_NPROC_OP, int) 
