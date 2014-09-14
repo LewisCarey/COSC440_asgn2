@@ -73,6 +73,7 @@ struct asgn2_circular_buffer {
 
 // The write position
 int w_pos = 0;
+int r_pos = 0;
 
 asgn2_dev asgn2_device;
 
@@ -195,9 +196,7 @@ size_t asgn2_write(const char *buf, size_t count) {
    */
   /* END SKELETON */
   /* START TRIM */
-	printk(KERN_WARNING "Writing from letter %c another %d letters.", buf, count);
-	return 0;
-	
+	printk(KERN_WARNING "Writing from letter %c another %d letters.\n", buf, count);
 
   while (size_written < count) {
     curr = list_entry(ptr, page_node, list);
@@ -224,16 +223,16 @@ size_t asgn2_write(const char *buf, size_t count) {
       curr_page_no++;
     } else {
       /* this is the page to write to */
-      //begin_offset = *f_pos % PAGE_SIZE;
+      begin_offset = w_pos % PAGE_SIZE;
       size_to_be_written = (size_t)min((size_t)(count - size_written),
   				       (size_t)(PAGE_SIZE - begin_offset));
       do {
-        curr_size_written = size_to_be_written -
-  	  copy_from_user(page_address(curr->page) + begin_offset,
+        curr_size_written = size_to_be_written;
+  	  memmove(page_address(curr->page) + begin_offset,
   	  	         buf + size_written, size_to_be_written);
         size_written += curr_size_written;
         begin_offset += curr_size_written;
-        //*f_pos += curr_size_written;
+        w_pos += curr_size_written;
         size_to_be_written -= curr_size_written;
       } while (size_to_be_written > 0);
       curr_page_no++;
@@ -244,9 +243,9 @@ size_t asgn2_write(const char *buf, size_t count) {
   /* END TRIM */
 
 
-  asgn2_device.data_size = max(asgn2_device.data_size,
-                               orig_f_pos + size_written);
-  return size_written;
+  asgn2_device.data_size = w_pos - r_pos;
+  
+return size_written;
 }
 /**
  * The tasklet that reads the data from the circular buffer
@@ -254,7 +253,7 @@ size_t asgn2_write(const char *buf, size_t count) {
  */
 int page_queue_write (void) {
 	printk(KERN_WARNING "I am a tasklet and I am running");	
-
+	
 	// Check that there is memory to write in the circular buffer
 	if (circ_buf.readIndex == circ_buf.writeIndex) {
 		printk(KERN_WARNING "No more data to read from the circular buffer");
@@ -290,7 +289,7 @@ DECLARE_TASKLET(t_name, page_queue_write, (unsigned long) &circ_buf);
  * If buffer is full, just do not write to the buffer and just drop the bytes.
  */
 int cb_write (char byte) {
-	printk(KERN_WARNING "Writing byte to buffer: %c\n", byte);
+	printk(KERN_WARNING "Writing byte to buffer: %c readIndex: %d writeIndex: %d\n", byte, circ_buf.readIndex, circ_buf.writeIndex);
 
 	// If write is one less than read, we know the buffer is full. Drop bytes
 	if ((circ_buf.writeIndex + 1) % circ_buf.capacity == circ_buf.readIndex) {
@@ -551,7 +550,7 @@ int __init asgn2_init_module(void){
 
 	// Initialise the circular buffer	
 	//circ_buf.capacity = PAGE_SIZE;
-	circ_buf.capacity = 3;
+	circ_buf.capacity = PAGE_SIZE;
 	circ_buf.buffer = kmalloc(sizeof (char) * circ_buf.capacity, GFP_KERNEL);
 	circ_buf.readIndex = 0;
 	circ_buf.writeIndex = 0;	
