@@ -33,11 +33,12 @@ __attribute__((section("__versions"))) = {
 	{ 0xe3321d40, "cdev_add" },
 	{ 0x9d0d02cf, "cdev_alloc" },
 	{ 0x29537c9e, "alloc_chrdev_region" },
-	{ 0xd197d610, "kmem_cache_alloc" },
 	{ 0xfaef0ed, "__tasklet_schedule" },
 	{ 0xff178f6, "__aeabi_idivmod" },
-	{ 0x2875e14d, "kmem_cache_free" },
-	{ 0x969267bd, "__free_pages" },
+	{ 0x30407f, "contig_page_data" },
+	{ 0x2da2b3ae, "__alloc_pages_nodemask" },
+	{ 0xd197d610, "kmem_cache_alloc" },
+	{ 0x99bb8806, "memmove" },
 	{ 0xf20dabd8, "free_irq" },
 	{ 0x9dfdf722, "gpio_free_array" },
 	{ 0xd6b8e852, "request_threaded_irq" },
@@ -47,6 +48,8 @@ __attribute__((section("__versions"))) = {
 	{ 0xe2d5255a, "strcmp" },
 	{ 0x7ec1c780, "mem_map" },
 	{ 0x67c2fa54, "__copy_to_user" },
+	{ 0x2875e14d, "kmem_cache_free" },
+	{ 0x969267bd, "__free_pages" },
 	{ 0xb81960ca, "snprintf" },
 	{ 0x27e1a049, "printk" },
 	{ 0x353e3fa5, "__get_user_4" },
@@ -59,4 +62,4 @@ __attribute__((section(".modinfo"))) =
 "depends=";
 
 
-MODULE_INFO(srcversion, "4608542942C27827912C760");
+MODULE_INFO(srcversion, "49AF05CAE15E1D451A4D454");

@@ -170,7 +170,7 @@ int asgn2_release (struct inode *inode, struct file *filp) {
  * module
  */
 size_t asgn2_write(const char *buf, size_t count) {
-  size_t orig_f_pos = w_pos;  /* the original file position */
+  //size_t orig_f_pos = w_pos;  /* the original file position */
   size_t size_written = 0;  /* size written to virtual disk in this function */
   size_t begin_offset;      /* the offset from the beginning of a page to
   			       start writing */
@@ -196,7 +196,7 @@ size_t asgn2_write(const char *buf, size_t count) {
    */
   /* END SKELETON */
   /* START TRIM */
-	printk(KERN_WARNING "Writing from letter %c another %d letters.\n", buf, count);
+	//printk(KERN_WARNING "Writing from letter %c another %d letters.\n", buf, count);
 
   while (size_written < count) {
     curr = list_entry(ptr, page_node, list);
@@ -252,7 +252,7 @@ return size_written;
  * and chooses what to write into memory.
  */
 int page_queue_write (void) {
-	printk(KERN_WARNING "I am a tasklet and I am running");	
+	//printk(KERN_WARNING "I am a tasklet and I am running");	
 	
 	// Check that there is memory to write in the circular buffer
 	if (circ_buf.readIndex == circ_buf.writeIndex) {
@@ -263,7 +263,8 @@ int page_queue_write (void) {
 	
 	// If write has looped around (is below read)
 	if (circ_buf.writeIndex < circ_buf.readIndex) {
-		int bytesNotWritten = asgn2_write(circ_buf.buffer[circ_buf.readIndex], 
+		int bytesNotWritten = (circ_buf.writeIndex + circ_buf.capacity) - circ_buf.readIndex - 
+						asgn2_write(&circ_buf.buffer[circ_buf.readIndex], 
 						(circ_buf.writeIndex + circ_buf.capacity) - circ_buf.readIndex);
 		circ_buf.readIndex += ((circ_buf.writeIndex + circ_buf.capacity) - circ_buf.readIndex) - bytesNotWritten;
 		// Mod the position to ensure wrap around
@@ -271,7 +272,8 @@ int page_queue_write (void) {
 	}
 	// Otherwise...
 	else {
-		int bytesNotWritten = asgn2_write(circ_buf.buffer[circ_buf.readIndex], 
+		int bytesNotWritten = (circ_buf.writeIndex - circ_buf.readIndex) - 
+						asgn2_write(&circ_buf.buffer[circ_buf.readIndex], 
 						circ_buf.writeIndex - circ_buf.readIndex);
 		// Set the read and write indices by just adding on to read
 		circ_buf.readIndex += (circ_buf.writeIndex - circ_buf.readIndex) - bytesNotWritten;
@@ -289,7 +291,7 @@ DECLARE_TASKLET(t_name, page_queue_write, (unsigned long) &circ_buf);
  * If buffer is full, just do not write to the buffer and just drop the bytes.
  */
 int cb_write (char byte) {
-	printk(KERN_WARNING "Writing byte to buffer: %c readIndex: %d writeIndex: %d\n", byte, circ_buf.readIndex, circ_buf.writeIndex);
+	//printk(KERN_WARNING "Writing byte to buffer: %c readIndex: %d writeIndex: %d\n", byte, circ_buf.readIndex, circ_buf.writeIndex);
 
 	// If write is one less than read, we know the buffer is full. Drop bytes
 	if ((circ_buf.writeIndex + 1) % circ_buf.capacity == circ_buf.readIndex) {
@@ -344,6 +346,8 @@ irqreturn_t dummyport_interrupt(int irq, void *dev_id) {
 
 /**
  * This function reads contents of the virtual disk and writes to the user 
+ *
+ * Anything that is read needs to be removed from the page queue.
  */
 ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 		 loff_t *f_pos) {
@@ -409,12 +413,31 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 		       size_to_be_read);
         size_read += curr_size_read;
         *f_pos += curr_size_read;
+	r_pos += curr_size_read; // Update our record of the read position
         begin_offset += curr_size_read;
         size_to_be_read -= curr_size_read;
       } while (curr_size_read > 0);
 
       curr_page_no++;
       ptr = ptr->next;
+
+	// Remove the page if needed
+	if ((asgn2_device.data_size > PAGE_SIZE)) {
+		if (NULL != curr->page) __free_page(curr->page);
+		list_del(asgn2_device.mem_list.next);
+		if (NULL != curr) kmem_cache_free(asgn2_device.cache, curr);
+		w_pos -= PAGE_SIZE;
+		r_pos -= PAGE_SIZE;
+		f_pos -= PAGE_SIZE;
+		asgn2_device.data_size = asgn2_device.data_size - PAGE_SIZE;
+		asgn2_device.num_pages--;	
+	} else {
+		printk(KERN_WARNING "End of the file has been reached");
+		asgn2_device.data_size = 0;
+		w_pos = 0;
+		r_pos = 0;
+		f_pos = 0;
+	}
     }
   }
   /* END TRIM */
