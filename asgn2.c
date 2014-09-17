@@ -47,6 +47,7 @@ MODULE_DESCRIPTION("COSC440 asgn2");
 typedef struct page_node_rec {
   struct list_head list;
   struct page *page;
+	int eofPos; // Keeps track of the EOF character if there is one
 } page_node;
 
 
@@ -74,6 +75,7 @@ struct asgn2_circular_buffer {
 // The write position
 int w_pos = 0;
 int r_pos = 0;
+int eofReached = 0;
 
 asgn2_dev asgn2_device;
 
@@ -141,6 +143,9 @@ int asgn2_open(struct inode *inode, struct file *filp) {
   if ((filp->f_mode & FMODE_WRITE) && !(filp->f_mode & FMODE_READ)) {
     free_memory_pages();
   }
+
+	// Reset EOF flag
+	eofReached = 0;
   /* END TRIM */
 
 
@@ -169,7 +174,7 @@ int asgn2_release (struct inode *inode, struct file *filp) {
  * This function writes from the user buffer to the virtual disk of this
  * module
  */
-size_t asgn2_write(const char *buf, size_t count) {
+size_t asgn2_write(const char *buf, size_t count, int eof) {
   //size_t orig_f_pos = w_pos;  /* the original file position */
   size_t size_written = 0;  /* size written to virtual disk in this function */
   size_t begin_offset;      /* the offset from the beginning of a page to
@@ -213,6 +218,8 @@ size_t asgn2_write(const char *buf, size_t count) {
         kmem_cache_free(asgn2_device.cache, curr);
   	break;
       }
+	// Initialise the EOF default to -1 (no EOF)
+	curr->eofPos = -1;
       //INIT_LIST_HEAD(&curr->list);
       list_add_tail(&(curr->list), &asgn2_device.mem_list);
       asgn2_device.num_pages++;
@@ -237,6 +244,13 @@ size_t asgn2_write(const char *buf, size_t count) {
       } while (size_to_be_written > 0);
       curr_page_no++;
       ptr = ptr->next;
+
+	// No more pages to write, check if we just wrote an end of file
+	if (eof == 1) {
+		// We have reached the EOF character
+		// Check to see if there is already an EOF enabled, if not write one
+		if (curr->eofPos < 0) curr->eofPos = begin_offset - 1;
+	}
     }
   }
 
@@ -261,11 +275,16 @@ int page_queue_write (void) {
 	} 
 	// Read from the circular buffer and write into memory
 	
+	// Setting a flag if the end of file has been reached
+	int eofLocation = 0;
+	if (circ_buf.buffer[circ_buf.readIndex] == '\0') eofLocation = 1;	
+
 	// If write has looped around (is below read)
 	if (circ_buf.writeIndex < circ_buf.readIndex) {
 		int bytesNotWritten = (circ_buf.writeIndex + circ_buf.capacity) - circ_buf.readIndex - 
 						asgn2_write(&circ_buf.buffer[circ_buf.readIndex], 
-						(circ_buf.writeIndex + circ_buf.capacity) - circ_buf.readIndex);
+						(circ_buf.writeIndex + circ_buf.capacity) - circ_buf.readIndex, 
+						eofLocation);
 		circ_buf.readIndex += ((circ_buf.writeIndex + circ_buf.capacity) - circ_buf.readIndex) - bytesNotWritten;
 		// Mod the position to ensure wrap around
 		circ_buf.readIndex = circ_buf.readIndex % circ_buf.capacity;
@@ -274,7 +293,8 @@ int page_queue_write (void) {
 	else {
 		int bytesNotWritten = (circ_buf.writeIndex - circ_buf.readIndex) - 
 						asgn2_write(&circ_buf.buffer[circ_buf.readIndex], 
-						circ_buf.writeIndex - circ_buf.readIndex);
+						circ_buf.writeIndex - circ_buf.readIndex, 
+						eofLocation);
 		// Set the read and write indices by just adding on to read
 		circ_buf.readIndex += (circ_buf.writeIndex - circ_buf.readIndex) - bytesNotWritten;
 	} 		
@@ -385,6 +405,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   /* END SKELETON */
   /* START TRIM */
   if (*f_pos >= asgn2_device.data_size) return 0;
+	if (eofReached == 1) return 0;
   count = min(asgn2_device.data_size - (size_t)*f_pos, count);
 
   while (size_read < count) {
@@ -403,36 +424,74 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
     } else {
       /* this is the page to read from */
       begin_offset = *f_pos % PAGE_SIZE;
-      size_to_be_read = (size_t)min((size_t)(count - size_read), 
+	// Are we at EOF?
+	if (curr->eofPos >= 0) {
+		printk(KERN_WARNING "EOF POS: %d\n", curr->eofPos);
+      		size_to_be_read = (size_t) curr->eofPos; 
+		eofReached = 1;
+		// Loop through incase we fine another EOF
+		int byteCount = curr->eofPos + 1;
+		curr->eofPos = -1;
+		char *nullCheck;
+		while (byteCount < PAGE_SIZE) {
+			nullCheck = page_address(curr->page) + begin_offset + byteCount;
+			//printk(KERN_WARNING "CHARACTER: %c\n", *nullCheck);
+			if (*nullCheck == '\0') {
+				// We have found a new EOF
+				curr->eofPos = byteCount;
+				printk(KERN_WARNING "NEXT EOF: %d\n", curr->eofPos);
+				break;
+			}
+			byteCount++;
+		}
+	} else {
+      		size_to_be_read = (size_t)min((size_t)(count - size_read), 
 				    (size_t)(PAGE_SIZE - begin_offset));
 
+	}
       do {
-        curr_size_read = size_to_be_read - 
-	  copy_to_user(buf + size_read, 
+		printk(KERN_WARNING "begin offset: %d, size to be read: %d, address: %d\n", begin_offset, size_to_be_read, buf + size_read);
+        	curr_size_read = size_to_be_read - 
+	  		copy_to_user(buf + size_read, 
 	  	       page_address(curr->page) + begin_offset,
 		       size_to_be_read);
-        size_read += curr_size_read;
+	size_read += curr_size_read;
         *f_pos += curr_size_read;
 	r_pos += curr_size_read; // Update our record of the read position
         begin_offset += curr_size_read;
         size_to_be_read -= curr_size_read;
+	
+
       } while (curr_size_read > 0);
 
       curr_page_no++;
       ptr = ptr->next;
 
+	if (eofReached == 1) {
+		// We reached the end of file, reset values	
+		asgn2_device.data_size = asgn2_device.data_size - size_read;
+		// Don't change write pos? w_pos = 0;
+		r_pos = size_read + 1; // We now read from after EOF position
+		*f_pos += size_read + 1;
+	}
+
 	// Remove the page if needed
-	if ((asgn2_device.data_size > PAGE_SIZE)) {
+	else if ((asgn2_device.data_size > PAGE_SIZE)) {
+		// Free and remove the page we are on
 		if (NULL != curr->page) __free_page(curr->page);
 		list_del(asgn2_device.mem_list.next);
 		if (NULL != curr) kmem_cache_free(asgn2_device.cache, curr);
+		// Keep track of our removal
 		w_pos -= PAGE_SIZE;
 		r_pos -= PAGE_SIZE;
 		f_pos -= PAGE_SIZE;
 		asgn2_device.data_size = asgn2_device.data_size - PAGE_SIZE;
 		asgn2_device.num_pages--;	
 	} else {
-		printk(KERN_WARNING "End of the file has been reached");
+		// Keep the last page in memory
+		//printk(KERN_WARNING "End of the file has been reached");
+		
+		// Check to see if EOF was reached
 		asgn2_device.data_size = 0;
 		w_pos = 0;
 		r_pos = 0;
