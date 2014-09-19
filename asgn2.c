@@ -77,6 +77,7 @@ int w_pos = 0;
 int r_pos = 0;
 int eofReached = 0;
 int eofCount = 0; // Keeps track of how many EOF characters have been written
+int blockFlag = 0;
 
 asgn2_dev asgn2_device;
 
@@ -408,10 +409,19 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   /* END SKELETON */
   /* START TRIM */
 	printk(KERN_WARNING "\n\n DATA SIZE AT START: %d\n\n", asgn2_device.data_size);
+	
+	if (eofReached) return 0;
+	printk(KERN_WARNING "Block check %d\n", blockFlag);
+	// Blocking!
+	if (blockFlag) {
+		printk(KERN_WARNING "BLOCKING REACHED");	
+		//atomic_set(&data_ready, 0);
+		//wait_event_interruptible(wq, atomic_read(&data_ready));
+		return 0;
+	}
 
   if (*f_pos >= asgn2_device.data_size) return 0;
 	printk(KERN_WARNING "EOF CHECK: %d\n", eofReached);
-	if (eofReached == 1) return 0;
 
   count = min(asgn2_device.data_size - (size_t)*f_pos, count);
 	//f_pos += r_pos;	
@@ -437,7 +447,10 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 	// Are we at EOF?
 	if (curr->eofPos >= 0) {
 		printk(KERN_WARNING "EOF POS: %d, BEGIN OFFSET: %d\n", curr->eofPos, begin_offset);
-      		size_to_be_read = (size_t) curr->eofPos; 
+      		size_to_be_read = (size_t) curr->eofPos + 1; 
+		
+		if (size_to_be_read != 0) size_to_be_read = size_to_be_read - r_pos;
+		
 		eofReached = 1;
 		// Loop through incase we fine another EOF
 		int byteCount = curr->eofPos + 1;
@@ -462,7 +475,8 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       do {
 		
 	// Size to be read needs to subtract what we have already read from r_pos
-	size_to_be_read = size_to_be_read - r_pos;
+	//printk(KERN_WARNING "size_to_be_read before subtract: %d\n", size_to_be_read);
+	//if (size_to_be_read != 0) size_to_be_read = size_to_be_read - r_pos;
 	printk(KERN_WARNING "begin offset: %d, size to be read: %d, address: %d\n", begin_offset, size_to_be_read, buf + size_read);
         	curr_size_read = size_to_be_read - 
 	  		copy_to_user(buf + size_read, 
@@ -484,7 +498,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 		// We reached the end of file, reset values	
 		//printk(KERN_WARNING "Old data_size: %d New data_size: %d\n", asgn2_device.data_size, asgn2_device.data_size - size_read);
 		printk(KERN_WARNING "Data_size BEFORE change: %d\n", asgn2_device.data_size);
-		asgn2_device.data_size = asgn2_device.data_size - ((size_read + 1) % PAGE_SIZE);
+		asgn2_device.data_size = asgn2_device.data_size - ((size_read) % PAGE_SIZE);
 		printk(KERN_WARNING "Data_size AFTER change: %d\n", asgn2_device.data_size);
 		// Decrement EOF counter
 		eofCount--;
@@ -498,14 +512,24 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 			// We have read to the EOF position, and can now return how much we read
 			return size_read;
 		} else {
-			// Otherwise reset the page and set everything to 0
-			printk(KERN_WARNING "RESET REACHED!");
-			asgn2_device.data_size = 0;
-			w_pos = 0;
-			r_pos = 0;
-			f_pos = 0;
-			curr->eofPos = -1;
-			eofCount = 0;
+			// If data size != 0, we still have data to read but no EOF, so block
+			if (asgn2_device.data_size != 0) {
+				printk(KERN_WARNING "No EOF but this much left: %d EOFPOS: %d\n", asgn2_device.data_size, curr->eofPos);
+				// Set the variables and flags
+				curr->eofPos = -1;
+				blockFlag = 1;
+				eofReached = 0;
+			}
+			else {
+				// Otherwise reset the page and set everything to 0
+				printk(KERN_WARNING "RESET REACHED! Data size: %d\n", asgn2_device.data_size);
+				asgn2_device.data_size = 0;
+				w_pos = 0;
+				r_pos = 0;
+				f_pos = 0;
+				curr->eofPos = -1;
+				eofCount = 0;
+			}
 		}
 	}
 
@@ -522,15 +546,6 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 		f_pos -= PAGE_SIZE;
 		asgn2_device.data_size = asgn2_device.data_size - PAGE_SIZE;
 		asgn2_device.num_pages--;	
-	} else {
-		// Keep the last page in memory
-		//printk(KERN_WARNING "End of the file has been reached");
-		
-		// Check to see if EOF was reached
-		asgn2_device.data_size = 0;
-		w_pos = 0;
-		r_pos = 0;
-		f_pos = 0;
 	}
     }
   }
