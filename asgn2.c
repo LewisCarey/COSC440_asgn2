@@ -407,12 +407,17 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
    */
   /* END SKELETON */
   /* START TRIM */
+	printk(KERN_WARNING "\n\n DATA SIZE AT START: %d\n\n", asgn2_device.data_size);
+
   if (*f_pos >= asgn2_device.data_size) return 0;
+	printk(KERN_WARNING "EOF CHECK: %d\n", eofReached);
 	if (eofReached == 1) return 0;
+
   count = min(asgn2_device.data_size - (size_t)*f_pos, count);
 	//f_pos += r_pos;	
 
   while (size_read < count) {
+	printk(KERN_WARNING "Trace");
     curr = list_entry(ptr, page_node, list);
     if (ptr == &asgn2_device.mem_list) {
       /* We have already passed the end of the data area of the
@@ -428,6 +433,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
     } else {
       /* this is the page to read from */
       begin_offset = r_pos % PAGE_SIZE;
+	
 	// Are we at EOF?
 	if (curr->eofPos >= 0) {
 		printk(KERN_WARNING "EOF POS: %d, BEGIN OFFSET: %d\n", curr->eofPos, begin_offset);
@@ -477,17 +483,20 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 	if (eofReached == 1) {
 		// We reached the end of file, reset values	
 		//printk(KERN_WARNING "Old data_size: %d New data_size: %d\n", asgn2_device.data_size, asgn2_device.data_size - size_read);
+		printk(KERN_WARNING "Data_size BEFORE change: %d\n", asgn2_device.data_size);
 		asgn2_device.data_size = asgn2_device.data_size - ((size_read + 1) % PAGE_SIZE);
-		printk(KERN_WARNING "Data_size after change: %d\n", asgn2_device.data_size);
+		printk(KERN_WARNING "Data_size AFTER change: %d\n", asgn2_device.data_size);
 		// Decrement EOF counter
 		eofCount--;
+		printk(KERN_WARNING "Size read: %d Count: %d\n", size_read, count);
 		// Don't change write pos? w_pos = 0;
 		// If we still have data...
-		//if (asgn2_device.data_size > 0) {
 		if (eofCount > 0) {
 			//r_pos += (size_read + 1) % PAGE_SIZE; // We now read from after EOF position
 			//f_pos += (size_read + 1) % PAGE_SIZE;
-			printk(KERN_WARNING "Read pos: %d\n", r_pos);
+			printk(KERN_WARNING "Read pos: %d EOF Pos: %d Data Size: %d\n", r_pos, curr->eofPos, asgn2_device.data_size);
+			// We have read to the EOF position, and can now return how much we read
+			return size_read;
 		} else {
 			// Otherwise reset the page and set everything to 0
 			printk(KERN_WARNING "RESET REACHED!");
@@ -508,7 +517,8 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 		if (NULL != curr) kmem_cache_free(asgn2_device.cache, curr);
 		// Keep track of our removal
 		w_pos -= PAGE_SIZE;
-		r_pos -= PAGE_SIZE;
+		//r_pos -= PAGE_SIZE;
+		r_pos = 0; // Reset the read pos to start of the page
 		f_pos -= PAGE_SIZE;
 		asgn2_device.data_size = asgn2_device.data_size - PAGE_SIZE;
 		asgn2_device.num_pages--;	
