@@ -76,6 +76,7 @@ struct asgn2_circular_buffer {
 int w_pos = 0;
 int r_pos = 0;
 int eofReached = 0;
+int eofCount = 0; // Keeps track of how many EOF characters have been written
 
 asgn2_dev asgn2_device;
 
@@ -250,6 +251,8 @@ size_t asgn2_write(const char *buf, size_t count, int eof) {
 		// We have reached the EOF character
 		// Check to see if there is already an EOF enabled, if not write one
 		if (curr->eofPos < 0) curr->eofPos = begin_offset - 1;
+		// Increment EOF count
+		eofCount++;
 	}
     }
   }
@@ -407,6 +410,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   if (*f_pos >= asgn2_device.data_size) return 0;
 	if (eofReached == 1) return 0;
   count = min(asgn2_device.data_size - (size_t)*f_pos, count);
+	//f_pos += r_pos;	
 
   while (size_read < count) {
     curr = list_entry(ptr, page_node, list);
@@ -423,7 +427,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       curr_page_no++;
     } else {
       /* this is the page to read from */
-      begin_offset = (*f_pos + r_pos) % PAGE_SIZE;
+      begin_offset = r_pos % PAGE_SIZE;
 	// Are we at EOF?
 	if (curr->eofPos >= 0) {
 		printk(KERN_WARNING "EOF POS: %d, BEGIN OFFSET: %d\n", curr->eofPos, begin_offset);
@@ -434,8 +438,8 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 		curr->eofPos = -1;
 		char *nullCheck;
 		while (byteCount < PAGE_SIZE) {
-			nullCheck = page_address(curr->page) + begin_offset + byteCount;
-			printk(KERN_WARNING "CHARACTER: %c\n", *nullCheck);
+			nullCheck = page_address(curr->page) + byteCount;
+			//printk(KERN_WARNING "CHARACTER: %c\n", *nullCheck);
 			if (*nullCheck == '\0') {
 				// We have found a new EOF
 				curr->eofPos = byteCount;
@@ -475,20 +479,24 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 		//printk(KERN_WARNING "Old data_size: %d New data_size: %d\n", asgn2_device.data_size, asgn2_device.data_size - size_read);
 		asgn2_device.data_size = asgn2_device.data_size - ((size_read + 1) % PAGE_SIZE);
 		printk(KERN_WARNING "Data_size after change: %d\n", asgn2_device.data_size);
+		// Decrement EOF counter
+		eofCount--;
 		// Don't change write pos? w_pos = 0;
 		// If we still have data...
-		if (asgn2_device.data_size > 0) {
-			printk(KERN_WARNING "Trace");
+		//if (asgn2_device.data_size > 0) {
+		if (eofCount > 0) {
 			//r_pos += (size_read + 1) % PAGE_SIZE; // We now read from after EOF position
 			//f_pos += (size_read + 1) % PAGE_SIZE;
 			printk(KERN_WARNING "Read pos: %d\n", r_pos);
 		} else {
 			// Otherwise reset the page and set everything to 0
+			printk(KERN_WARNING "RESET REACHED!");
 			asgn2_device.data_size = 0;
 			w_pos = 0;
 			r_pos = 0;
 			f_pos = 0;
 			curr->eofPos = -1;
+			eofCount = 0;
 		}
 	}
 
