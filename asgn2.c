@@ -77,7 +77,12 @@ int w_pos = 0;
 int r_pos = 0;
 int eofReached = 0;
 int eofCount = 0; // Keeps track of how many EOF characters have been written
-int blockFlag = 0;
+
+DECLARE_WAIT_QUEUE_HEAD(wq); // Queue for putting reader to sleep when no EOF reached
+atomic_t data_ready;
+
+DECLARE_WAIT_QUEUE_HEAD(dq); // Queue for putting processes to sleep if one is already reading
+atomic_t device_ready;
 
 asgn2_dev asgn2_device;
 
@@ -137,7 +142,11 @@ int asgn2_open(struct inode *inode, struct file *filp) {
   /* END SKELETON */
   /* START TRIM */
   if (atomic_read(&asgn2_device.nprocs) >= atomic_read(&asgn2_device.max_nprocs)) {
-    return -EBUSY;
+    	// More than one process trying to access the device
+	atomic_set(&device_ready, 0);
+	wait_event_interruptible_exclusive(dq, atomic_read(&device_ready));	
+
+	//return -EBUSY;
   }
 
   atomic_inc(&asgn2_device.nprocs);
@@ -167,6 +176,8 @@ int asgn2_release (struct inode *inode, struct file *filp) {
    */
   /* END SKELETON */
   /* START TRIM */
+	atomic_set(&device_ready, 1);
+	wake_up_interruptible(&dq);
   atomic_dec(&asgn2_device.nprocs);
   /* END TRIM */
   return 0;
@@ -262,6 +273,11 @@ size_t asgn2_write(const char *buf, size_t count, int eof) {
 
 
   asgn2_device.data_size = w_pos - r_pos;
+	// Check the data size after write
+	printk(KERN_WARNING "Data size after write: %d\n", asgn2_device.data_size);
+	// Finished writing, wake up reader
+	atomic_set(&data_ready, 1);
+	wake_up_interruptible(&wq);
   
 return size_written;
 }
@@ -408,33 +424,40 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
    */
   /* END SKELETON */
   /* START TRIM */
-	printk(KERN_WARNING "\n\n DATA SIZE AT START: %d\n\n", asgn2_device.data_size);
 	
 	if (eofReached) return 0;
-	printk(KERN_WARNING "Block check %d\n", blockFlag);
 	// Blocking!
-	if (blockFlag) {
+	printk(KERN_WARNING "r_pos: %d, w_pos: %d\n", r_pos, w_pos);
+	if (r_pos == w_pos) {
 		printk(KERN_WARNING "BLOCKING REACHED");	
-		//atomic_set(&data_ready, 0);
-		//wait_event_interruptible(wq, atomic_read(&data_ready));
-		return 0;
+		atomic_set(&data_ready, 0);
+		wait_event_interruptible(wq, atomic_read(&data_ready));
 	}
 
-  if (*f_pos >= asgn2_device.data_size) return 0;
+	printk(KERN_WARNING "\n\n DATA SIZE AT START: %d\n\n", asgn2_device.data_size);
+  //if (*f_pos >= asgn2_device.data_size) return 0;
 	printk(KERN_WARNING "EOF CHECK: %d\n", eofReached);
 
-  count = min(asgn2_device.data_size - (size_t)*f_pos, count);
-	//f_pos += r_pos;	
+  //count = min(asgn2_device.data_size - (size_t)r_pos, count);
+	// If we are not at an EOF, and there is still data to be read, change count
+	/*if (count <= 0 && asgn2_device.data_size > 0) {
+		printk(KERN_WARNING "Manually setting count\n");
+		count = asgn2_device.data_size;
+	}*/
+	count = asgn2_device.data_size;	
 
+	//f_pos += r_pos;	
+	printk(KERN_WARNING "Are we getting into the loop? size_read: %d count: %d", size_read, count);
   while (size_read < count) {
-	printk(KERN_WARNING "Trace");
     curr = list_entry(ptr, page_node, list);
     if (ptr == &asgn2_device.mem_list) {
       /* We have already passed the end of the data area of the
          ramdisk, so we quit and return the size we have read
          so far */
-      printk(KERN_WARNING "invalid virtual memory access\n");
-      return size_read;
+      //printk(KERN_WARNING "Error: invalid virtual memory access\n");
+      //return size_read;
+	ptr = ptr->next;
+	curr_page_no++;
     } else if (curr_page_no < begin_page_no) {
       /* haven't reached the page occupued by *f_pos yet, 
          so move on to the next page */
@@ -468,15 +491,14 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 			byteCount++;
 		}
 	} else {
-      		size_to_be_read = (size_t)min((size_t)(count - size_read), 
+      		printk(KERN_WARNING "Trace");
+		size_to_be_read = (size_t)min((size_t)(count - size_read), 
 				    (size_t)(PAGE_SIZE - begin_offset));
 
 	}
       do {
 		
 	// Size to be read needs to subtract what we have already read from r_pos
-	//printk(KERN_WARNING "size_to_be_read before subtract: %d\n", size_to_be_read);
-	//if (size_to_be_read != 0) size_to_be_read = size_to_be_read - r_pos;
 	printk(KERN_WARNING "begin offset: %d, size to be read: %d, address: %d\n", begin_offset, size_to_be_read, buf + size_read);
         	curr_size_read = size_to_be_read - 
 	  		copy_to_user(buf + size_read, 
@@ -517,7 +539,6 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 				printk(KERN_WARNING "No EOF but this much left: %d EOFPOS: %d\n", asgn2_device.data_size, curr->eofPos);
 				// Set the variables and flags
 				curr->eofPos = -1;
-				blockFlag = 1;
 				eofReached = 0;
 			}
 			else {
@@ -534,7 +555,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 	}
 
 	// Remove the page if needed
-	else if ((asgn2_device.data_size > PAGE_SIZE)) {
+	else if ((asgn2_device.data_size > PAGE_SIZE) || r_pos == PAGE_SIZE) {
 		// Free and remove the page we are on
 		if (NULL != curr->page) __free_page(curr->page);
 		list_del(asgn2_device.mem_list.next);
@@ -550,7 +571,7 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
     }
   }
   /* END TRIM */
-
+	printk(KERN_WARNING "WE HAVE REACHED THE END OF THE READ METHOD\n");
   return size_read;
 }
 
