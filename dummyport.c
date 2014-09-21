@@ -1,6 +1,6 @@
 
 /**
- * File: asgn2.c
+ * File: dummyport.c
  * Date: 13/03/2011
  * Author: Lewis Carey 
  * Version: 0.1
@@ -30,7 +30,7 @@
 #include <linux/proc_fs.h>
 #include <linux/device.h>
 #include <linux/sched.h>
-#include "gpio.c"
+#include "gpio.h"
 #include <linux/interrupt.h>
 
 #define MYDEV_NAME "asgn2"
@@ -72,11 +72,13 @@ struct asgn2_circular_buffer {
 	int capacity;
 } circ_buf;
 
-// The write position
+// The write and read positions of the page memory
 int w_pos = 0;
 int r_pos = 0;
+
+// The EOF flag and counter
 int eofReached = 0;
-int eofCount = 0; // Keeps track of how many EOF characters have been written
+int eofCount = 0;
 
 DECLARE_WAIT_QUEUE_HEAD(wq); // Queue for putting reader to sleep when no EOF reached
 atomic_t data_ready;
@@ -142,11 +144,9 @@ int asgn2_open(struct inode *inode, struct file *filp) {
   /* END SKELETON */
   /* START TRIM */
   if (atomic_read(&asgn2_device.nprocs) >= atomic_read(&asgn2_device.max_nprocs)) {
-    	// More than one process trying to access the device
+	// More than one process trying to access the device - add to queue
 	atomic_set(&device_ready, 0);
 	wait_event_interruptible_exclusive(dq, atomic_read(&device_ready));	
-
-	//return -EBUSY;
   }
 
   atomic_inc(&asgn2_device.nprocs);
@@ -176,6 +176,7 @@ int asgn2_release (struct inode *inode, struct file *filp) {
    */
   /* END SKELETON */
   /* START TRIM */
+	// Free from the queue and wake up next process
 	atomic_set(&device_ready, 1);
 	wake_up_interruptible(&dq);
   atomic_dec(&asgn2_device.nprocs);
@@ -214,7 +215,6 @@ size_t asgn2_write(const char *buf, size_t count, int eof) {
    */
   /* END SKELETON */
   /* START TRIM */
-	//printk(KERN_WARNING "Writing from letter %c another %d letters.\n", buf, count);
 
   while (size_written < count) {
     curr = list_entry(ptr, page_node, list);
@@ -247,6 +247,7 @@ size_t asgn2_write(const char *buf, size_t count, int eof) {
       size_to_be_written = (size_t)min((size_t)(count - size_written),
   				       (size_t)(PAGE_SIZE - begin_offset));
       do {
+	// Write to memory from circular buffer, and update the variable trackers
         curr_size_written = size_to_be_written;
   	  memmove(page_address(curr->page) + begin_offset,
   	  	         buf + size_written, size_to_be_written);
@@ -273,8 +274,6 @@ size_t asgn2_write(const char *buf, size_t count, int eof) {
 
 
   asgn2_device.data_size = w_pos - r_pos;
-	// Check the data size after write
-	printk(KERN_WARNING "Data size after write: %d\n", asgn2_device.data_size);
 	// Finished writing, wake up reader
 	atomic_set(&data_ready, 1);
 	wake_up_interruptible(&wq);
@@ -285,18 +284,17 @@ return size_written;
  * The tasklet that reads the data from the circular buffer
  * and chooses what to write into memory.
  */
-int page_queue_write (void) {
-	//printk(KERN_WARNING "I am a tasklet and I am running");	
-	
+void page_queue_write (unsigned long t_arg) {
+	int eofLocation = 0;
+
 	// Check that there is memory to write in the circular buffer
 	if (circ_buf.readIndex == circ_buf.writeIndex) {
 		printk(KERN_WARNING "No more data to read from the circular buffer");
-		return 0;
+		return;
 	} 
 	// Read from the circular buffer and write into memory
 	
 	// Setting a flag if the end of file has been reached
-	int eofLocation = 0;
 	if (circ_buf.buffer[circ_buf.readIndex] == '\0') eofLocation = 1;	
 
 	// If write has looped around (is below read)
@@ -319,10 +317,11 @@ int page_queue_write (void) {
 		circ_buf.readIndex += (circ_buf.writeIndex - circ_buf.readIndex) - bytesNotWritten;
 	} 		
 	
-	return 0;
+	return;
 }
 
-DECLARE_TASKLET(t_name, page_queue_write, (unsigned long) &circ_buf);
+// Creating the tasklet
+static DECLARE_TASKLET(t_name, page_queue_write, (unsigned long) &circ_buf);
 
 /**
  * This function writes the byte into the circular buffer.
@@ -331,8 +330,6 @@ DECLARE_TASKLET(t_name, page_queue_write, (unsigned long) &circ_buf);
  * If buffer is full, just do not write to the buffer and just drop the bytes.
  */
 int cb_write (char byte) {
-	//printk(KERN_WARNING "Writing byte to buffer: %c readIndex: %d writeIndex: %d\n", byte, circ_buf.readIndex, circ_buf.writeIndex);
-
 	// If write is one less than read, we know the buffer is full. Drop bytes
 	if ((circ_buf.writeIndex + 1) % circ_buf.capacity == circ_buf.readIndex) {
 		// We are full, drop byte
@@ -387,7 +384,9 @@ irqreturn_t dummyport_interrupt(int irq, void *dev_id) {
 /**
  * This function reads contents of the virtual disk and writes to the user 
  *
- * Anything that is read needs to be removed from the page queue.
+ * Anything that is read needs to be removed from the page queue. f_pos
+ * has been removed. Program will read to an EOF character, and if none
+ * are present, it will block until one is found.
  */
 ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 		 loff_t *f_pos) {
@@ -403,6 +402,9 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 
   struct list_head *ptr = asgn2_device.mem_list.next;
   page_node *curr;
+
+	int byteCount;
+	char *nullCheck;
 
   /* START SKELETON */
   /* COMPLETE ME */
@@ -426,41 +428,24 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
   /* START TRIM */
 	
 	if (eofReached) return 0;
-	// Blocking!
-	printk(KERN_WARNING "r_pos: %d, w_pos: %d\n", r_pos, w_pos);
+	// Blocking - add to queue and wait for more data
 	if (r_pos == w_pos) {
-		printk(KERN_WARNING "BLOCKING REACHED");	
 		atomic_set(&data_ready, 0);
 		wait_event_interruptible(wq, atomic_read(&data_ready));
 	}
 
-	printk(KERN_WARNING "\n\n DATA SIZE AT START: %d\n\n", asgn2_device.data_size);
-  //if (*f_pos >= asgn2_device.data_size) return 0;
-	printk(KERN_WARNING "EOF CHECK: %d\n", eofReached);
-
-  //count = min(asgn2_device.data_size - (size_t)r_pos, count);
-	// If we are not at an EOF, and there is still data to be read, change count
-	/*if (count <= 0 && asgn2_device.data_size > 0) {
-		printk(KERN_WARNING "Manually setting count\n");
-		count = asgn2_device.data_size;
-	}*/
 	count = asgn2_device.data_size;	
 
-	//f_pos += r_pos;	
-	printk(KERN_WARNING "Are we getting into the loop? size_read: %d count: %d", size_read, count);
   while (size_read < count) {
     curr = list_entry(ptr, page_node, list);
     if (ptr == &asgn2_device.mem_list) {
       /* We have already passed the end of the data area of the
-         ramdisk, so we quit and return the size we have read
-         so far */
-      //printk(KERN_WARNING "Error: invalid virtual memory access\n");
-      //return size_read;
+         ramdisk, but have not reached an EOF. Increment the
+	 page and keep reading until data size runs out */
 	ptr = ptr->next;
 	curr_page_no++;
     } else if (curr_page_no < begin_page_no) {
-      /* haven't reached the page occupued by *f_pos yet, 
-         so move on to the next page */
+      /* Deprecated - left in 'just in case' */
       ptr = ptr->next;
       curr_page_no++;
     } else {
@@ -469,29 +454,25 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 	
 	// Are we at EOF?
 	if (curr->eofPos >= 0) {
-		printk(KERN_WARNING "EOF POS: %d, BEGIN OFFSET: %d\n", curr->eofPos, begin_offset);
-      		size_to_be_read = (size_t) curr->eofPos + 1; 
+      		// Set the various variables and check to see if there is another EOF on this page
+		size_to_be_read = (size_t) curr->eofPos + 1; 
 		
 		if (size_to_be_read != 0) size_to_be_read = size_to_be_read - r_pos;
 		
 		eofReached = 1;
 		// Loop through incase we fine another EOF
-		int byteCount = curr->eofPos + 1;
+		byteCount = curr->eofPos + 1;
 		curr->eofPos = -1;
-		char *nullCheck;
 		while (byteCount < PAGE_SIZE) {
 			nullCheck = page_address(curr->page) + byteCount;
-			//printk(KERN_WARNING "CHARACTER: %c\n", *nullCheck);
 			if (*nullCheck == '\0') {
 				// We have found a new EOF
 				curr->eofPos = byteCount;
-				printk(KERN_WARNING "NEXT EOF: %d\n", curr->eofPos);
 				break;
 			}
 			byteCount++;
 		}
 	} else {
-      		printk(KERN_WARNING "Trace");
 		size_to_be_read = (size_t)min((size_t)(count - size_read), 
 				    (size_t)(PAGE_SIZE - begin_offset));
 
@@ -499,7 +480,6 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
       do {
 		
 	// Size to be read needs to subtract what we have already read from r_pos
-	printk(KERN_WARNING "begin offset: %d, size to be read: %d, address: %d\n", begin_offset, size_to_be_read, buf + size_read);
         	curr_size_read = size_to_be_read - 
 	  		copy_to_user(buf + size_read, 
 	  	       page_address(curr->page) + begin_offset,
@@ -518,32 +498,22 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 
 	if (eofReached == 1) {
 		// We reached the end of file, reset values	
-		//printk(KERN_WARNING "Old data_size: %d New data_size: %d\n", asgn2_device.data_size, asgn2_device.data_size - size_read);
-		printk(KERN_WARNING "Data_size BEFORE change: %d\n", asgn2_device.data_size);
 		asgn2_device.data_size = asgn2_device.data_size - ((size_read) % PAGE_SIZE);
-		printk(KERN_WARNING "Data_size AFTER change: %d\n", asgn2_device.data_size);
 		// Decrement EOF counter
 		eofCount--;
-		printk(KERN_WARNING "Size read: %d Count: %d\n", size_read, count);
-		// Don't change write pos? w_pos = 0;
 		// If we still have data...
 		if (eofCount > 0) {
-			//r_pos += (size_read + 1) % PAGE_SIZE; // We now read from after EOF position
-			//f_pos += (size_read + 1) % PAGE_SIZE;
-			printk(KERN_WARNING "Read pos: %d EOF Pos: %d Data Size: %d\n", r_pos, curr->eofPos, asgn2_device.data_size);
 			// We have read to the EOF position, and can now return how much we read
 			return size_read;
 		} else {
 			// If data size != 0, we still have data to read but no EOF, so block
 			if (asgn2_device.data_size != 0) {
-				printk(KERN_WARNING "No EOF but this much left: %d EOFPOS: %d\n", asgn2_device.data_size, curr->eofPos);
 				// Set the variables and flags
 				curr->eofPos = -1;
 				eofReached = 0;
 			}
 			else {
 				// Otherwise reset the page and set everything to 0
-				printk(KERN_WARNING "RESET REACHED! Data size: %d\n", asgn2_device.data_size);
 				asgn2_device.data_size = 0;
 				w_pos = 0;
 				r_pos = 0;
@@ -562,7 +532,6 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
 		if (NULL != curr) kmem_cache_free(asgn2_device.cache, curr);
 		// Keep track of our removal
 		w_pos -= PAGE_SIZE;
-		//r_pos -= PAGE_SIZE;
 		r_pos = 0; // Reset the read pos to start of the page
 		f_pos -= PAGE_SIZE;
 		asgn2_device.data_size = asgn2_device.data_size - PAGE_SIZE;
@@ -571,7 +540,6 @@ ssize_t asgn2_read(struct file *filp, char __user *buf, size_t count,
     }
   }
   /* END TRIM */
-	printk(KERN_WARNING "WE HAVE REACHED THE END OF THE READ METHOD\n");
   return size_read;
 }
 
@@ -702,7 +670,6 @@ int __init asgn2_init_module(void){
 	}
 
 	// Initialise the circular buffer	
-	//circ_buf.capacity = PAGE_SIZE;
 	circ_buf.capacity = PAGE_SIZE;
 	circ_buf.buffer = kmalloc(sizeof (char) * circ_buf.capacity, GFP_KERNEL);
 	circ_buf.readIndex = 0;
